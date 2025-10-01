@@ -14,15 +14,11 @@ except ImportError:
     print("psycopg2-binary is required")
     sys.exit(1)
 
+# Import shared configuration
+from config import get_db_config
 
 # Database configuration
-DB_CONFIG = {
-    'host': 'localhost',
-    'port': 5432,
-    'database': 'augusta_incentives',
-    'user': 'postgres',  
-    'password': 'admin' 
-}
+DB_CONFIG = get_db_config()
 
 class DatabaseManager:
     """Manages PostgreSQL database operations for Augusta Incentives."""

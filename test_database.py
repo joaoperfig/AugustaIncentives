@@ -8,14 +8,11 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import sys
 
-# Database configuration (should match database_setup.py)
-DB_CONFIG = {
-    'host': 'localhost',
-    'port': 5432,
-    'database': 'augusta_incentives',
-    'user': 'postgres',
-    'password': 'admin'
-}
+# Import shared configuration
+from config import get_db_config
+
+# Database configuration
+DB_CONFIG = get_db_config()
 
 def test_database_connection():
     """Test if we can connect to the database."""
