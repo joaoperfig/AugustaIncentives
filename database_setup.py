@@ -135,6 +135,22 @@ class DatabaseManager:
                 "CREATE INDEX IF NOT EXISTS idx_incentives_end_date ON incentives(end_date);"
             ]
             
+            # Create full-text search indexes for enhanced keyword searching
+            fulltext_indexes_sql = [
+                # Companies full-text search
+                "CREATE INDEX IF NOT EXISTS idx_companies_fts ON companies USING gin(to_tsvector('portuguese', company_name || ' ' || COALESCE(cae_primary_label, '') || ' ' || COALESCE(trade_description_native, '')));",
+                
+                # Incentives full-text search
+                "CREATE INDEX IF NOT EXISTS idx_incentives_fts ON incentives USING gin(to_tsvector('portuguese', COALESCE(title, '') || ' ' || COALESCE(description, '') || ' ' || COALESCE(ai_description, '')));",
+                
+                # Individual field full-text indexes for more targeted searches
+                "CREATE INDEX IF NOT EXISTS idx_companies_name_fts ON companies USING gin(to_tsvector('portuguese', company_name));",
+                "CREATE INDEX IF NOT EXISTS idx_companies_description_fts ON companies USING gin(to_tsvector('portuguese', COALESCE(trade_description_native, '')));",
+                "CREATE INDEX IF NOT EXISTS idx_incentives_title_fts ON incentives USING gin(to_tsvector('portuguese', COALESCE(title, '')));",
+                "CREATE INDEX IF NOT EXISTS idx_incentives_description_fts ON incentives USING gin(to_tsvector('portuguese', COALESCE(description, '')));",
+                "CREATE INDEX IF NOT EXISTS idx_incentives_ai_description_fts ON incentives USING gin(to_tsvector('portuguese', COALESCE(ai_description, '')));"
+            ]
+            
             self.cursor.execute(companies_table_sql)
             logger.info("Companies table created/verified")
             
@@ -144,7 +160,10 @@ class DatabaseManager:
             for index_sql in indexes_sql:
                 self.cursor.execute(index_sql)
             
-            logger.info("Database indexes created/verified")
+            for fulltext_sql in fulltext_indexes_sql:
+                self.cursor.execute(fulltext_sql)
+            
+            logger.info("Database indexes and full-text search indexes created/verified")
             self.connection.commit()
             
         except psycopg2.Error as e:
@@ -313,6 +332,145 @@ class DatabaseManager:
         except psycopg2.Error as e:
             logger.error(f"Error getting table stats: {e}")
             return {}
+    
+    def search_companies(self, keywords: str, search_type: str = 'fulltext', limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Search companies by keywords.
+        
+        Args:
+            keywords: Search terms
+            search_type: 'fulltext', 'like', or 'regex'
+            limit: Maximum number of results to return
+        """
+        try:
+            if search_type == 'fulltext':
+                # Full-text search using PostgreSQL's tsvector
+                query = """
+                SELECT id, company_name, cae_primary_label, trade_description_native, website,
+                       ts_rank(to_tsvector('portuguese', company_name || ' ' || COALESCE(cae_primary_label, '') || ' ' || COALESCE(trade_description_native, '')), 
+                               plainto_tsquery('portuguese', %s)) as rank
+                FROM companies 
+                WHERE to_tsvector('portuguese', company_name || ' ' || COALESCE(cae_primary_label, '') || ' ' || COALESCE(trade_description_native, '')) 
+                      @@ plainto_tsquery('portuguese', %s)
+                ORDER BY rank DESC
+                LIMIT %s;
+                """
+                self.cursor.execute(query, (keywords, keywords, limit))
+                
+            elif search_type == 'like':
+                # Pattern matching with ILIKE
+                pattern = f"%{keywords}%"
+                query = """
+                SELECT id, company_name, cae_primary_label, trade_description_native, website
+                FROM companies 
+                WHERE company_name ILIKE %s 
+                   OR cae_primary_label ILIKE %s 
+                   OR trade_description_native ILIKE %s
+                ORDER BY company_name
+                LIMIT %s;
+                """
+                self.cursor.execute(query, (pattern, pattern, pattern, limit))
+                
+            elif search_type == 'regex':
+                # Regular expression search
+                query = """
+                SELECT id, company_name, cae_primary_label, trade_description_native, website
+                FROM companies 
+                WHERE company_name ~* %s 
+                   OR cae_primary_label ~* %s 
+                   OR trade_description_native ~* %s
+                ORDER BY company_name
+                LIMIT %s;
+                """
+                self.cursor.execute(query, (keywords, keywords, keywords, limit))
+            
+            else:
+                raise ValueError(f"Invalid search_type: {search_type}")
+            
+            results = self.cursor.fetchall()
+            return [dict(row) for row in results]
+            
+        except psycopg2.Error as e:
+            logger.error(f"Error searching companies: {e}")
+            return []
+    
+    def search_incentives(self, keywords: str, search_type: str = 'fulltext', limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Search incentives by keywords.
+        
+        Args:
+            keywords: Search terms
+            search_type: 'fulltext', 'like', or 'regex'
+            limit: Maximum number of results to return
+        """
+        try:
+            if search_type == 'fulltext':
+                # Full-text search using PostgreSQL's tsvector
+                query = """
+                SELECT incentive_id, title, description, ai_description, document_urls, 
+                       publication_date, start_date, end_date, total_budget, source_link,
+                       ts_rank(to_tsvector('portuguese', COALESCE(title, '') || ' ' || COALESCE(description, '') || ' ' || COALESCE(ai_description, '')), 
+                               plainto_tsquery('portuguese', %s)) as rank
+                FROM incentives 
+                WHERE to_tsvector('portuguese', COALESCE(title, '') || ' ' || COALESCE(description, '') || ' ' || COALESCE(ai_description, '')) 
+                      @@ plainto_tsquery('portuguese', %s)
+                ORDER BY rank DESC
+                LIMIT %s;
+                """
+                self.cursor.execute(query, (keywords, keywords, limit))
+                
+            elif search_type == 'like':
+                # Pattern matching with ILIKE
+                pattern = f"%{keywords}%"
+                query = """
+                SELECT incentive_id, title, description, ai_description, document_urls, 
+                       publication_date, start_date, end_date, total_budget, source_link
+                FROM incentives 
+                WHERE title ILIKE %s 
+                   OR description ILIKE %s 
+                   OR ai_description ILIKE %s
+                ORDER BY publication_date DESC
+                LIMIT %s;
+                """
+                self.cursor.execute(query, (pattern, pattern, pattern, limit))
+                
+            elif search_type == 'regex':
+                # Regular expression search
+                query = """
+                SELECT incentive_id, title, description, ai_description, document_urls, 
+                       publication_date, start_date, end_date, total_budget, source_link
+                FROM incentives 
+                WHERE title ~* %s 
+                   OR description ~* %s 
+                   OR ai_description ~* %s
+                ORDER BY publication_date DESC
+                LIMIT %s;
+                """
+                self.cursor.execute(query, (keywords, keywords, keywords, limit))
+            
+            else:
+                raise ValueError(f"Invalid search_type: {search_type}")
+            
+            results = self.cursor.fetchall()
+            return [dict(row) for row in results]
+            
+        except psycopg2.Error as e:
+            logger.error(f"Error searching incentives: {e}")
+            return []
+    
+    def search_all(self, keywords: str, search_type: str = 'fulltext', limit: int = 100) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Search both companies and incentives by keywords.
+        
+        Args:
+            keywords: Search terms
+            search_type: 'fulltext', 'like', or 'regex'
+            limit: Maximum number of results to return per table
+        """
+        return {
+            'companies': self.search_companies(keywords, search_type, limit),
+            'incentives': self.search_incentives(keywords, search_type, limit)
+        }
 
 
 def main():

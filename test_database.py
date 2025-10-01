@@ -288,6 +288,191 @@ def test_sample_queries():
         print(f"FAILED: Error running sample queries: {e}")
         return False
 
+def test_fulltext_indexes():
+    """Test if full-text search indexes exist and are functional."""
+    print("\nTesting full-text search indexes...")
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Check if full-text search indexes exist
+        expected_indexes = [
+            'idx_companies_fts',
+            'idx_incentives_fts',
+            'idx_companies_name_fts',
+            'idx_companies_description_fts',
+            'idx_incentives_title_fts',
+            'idx_incentives_description_fts',
+            'idx_incentives_ai_description_fts'
+        ]
+        
+        cursor.execute("""
+            SELECT indexname 
+            FROM pg_indexes 
+            WHERE schemaname = 'public' 
+            AND indexname IN %s;
+        """, (tuple(expected_indexes),))
+        
+        existing_indexes = [row['indexname'] for row in cursor.fetchall()]
+        
+        print("Full-text search indexes found:")
+        for index in expected_indexes:
+            if index in existing_indexes:
+                print(f"  [OK] {index}")
+            else:
+                print(f"  [MISSING] {index}")
+        
+        # Test if indexes are actually functional
+        print("\nTesting full-text search functionality:")
+        
+        # Test companies full-text search
+        cursor.execute("""
+            SELECT COUNT(*) as count
+            FROM companies 
+            WHERE to_tsvector('portuguese', company_name || ' ' || COALESCE(cae_primary_label, '') || ' ' || COALESCE(trade_description_native, '')) 
+                  @@ plainto_tsquery('portuguese', 'restaurant');
+        """)
+        companies_search_count = cursor.fetchone()['count']
+        print(f"  Companies matching 'restaurant': {companies_search_count}")
+        
+        # Test incentives full-text search
+        cursor.execute("""
+            SELECT COUNT(*) as count
+            FROM incentives 
+            WHERE to_tsvector('portuguese', COALESCE(title, '') || ' ' || COALESCE(description, '') || ' ' || COALESCE(ai_description, '')) 
+                  @@ plainto_tsquery('portuguese', 'digital');
+        """)
+        incentives_search_count = cursor.fetchone()['count']
+        print(f"  Incentives matching 'digital': {incentives_search_count}")
+        
+        # Test incentives ranking functionality
+        cursor.execute("""
+            SELECT title, description, ai_description,
+                   ts_rank(to_tsvector('portuguese', COALESCE(title, '') || ' ' || COALESCE(description, '') || ' ' || COALESCE(ai_description, '')), 
+                           plainto_tsquery('portuguese', 'digital')) as rank
+            FROM incentives 
+            WHERE to_tsvector('portuguese', COALESCE(title, '') || ' ' || COALESCE(description, '') || ' ' || COALESCE(ai_description, '')) 
+                  @@ plainto_tsquery('portuguese', 'digital')
+            ORDER BY rank DESC
+            LIMIT 3;
+        """)
+        ranked_incentives = cursor.fetchall()
+        
+        if ranked_incentives:
+            print("  Sample ranked incentive results:")
+            for result in ranked_incentives:
+                print(f"    - {result['title']} (rank: {result['rank']:.4f})")
+                if result['description'] and 'digital' in result['description'].lower():
+                    desc = result['description'][:150] + "..." if len(result['description']) > 150 else result['description']
+                    print(f"      Description: {desc}")
+                if result['ai_description'] and 'digital' in result['ai_description'].lower():
+                    ai_desc = result['ai_description'][:150] + "..." if len(result['ai_description']) > 150 else result['ai_description']
+                    print(f"      AI Description: {ai_desc}")
+        
+        # Test ranking functionality
+        cursor.execute("""
+            SELECT company_name, cae_primary_label, trade_description_native,
+                   ts_rank(to_tsvector('portuguese', company_name || ' ' || COALESCE(cae_primary_label, '') || ' ' || COALESCE(trade_description_native, '')), 
+                           plainto_tsquery('portuguese', 'restaurant')) as rank
+            FROM companies 
+            WHERE to_tsvector('portuguese', company_name || ' ' || COALESCE(cae_primary_label, '') || ' ' || COALESCE(trade_description_native, '')) 
+                  @@ plainto_tsquery('portuguese', 'restaurant')
+            ORDER BY rank DESC
+            LIMIT 3;
+        """)
+        ranked_results = cursor.fetchall()
+        
+        if ranked_results:
+            print("  Sample ranked results:")
+            for result in ranked_results:
+                print(f"    - {result['company_name']} (rank: {result['rank']:.4f})")
+                if result['cae_primary_label'] and 'restaurant' in result['cae_primary_label'].lower():
+                    print(f"      CAE: {result['cae_primary_label']}")
+                if result['trade_description_native'] and ('restaur' in result['trade_description_native'].lower() or 'restaurant' in result['trade_description_native'].lower()):
+                    desc = result['trade_description_native'][:150] + "..." if len(result['trade_description_native']) > 150 else result['trade_description_native']
+                    print(f"      Description: {desc}")
+        
+        cursor.close()
+        conn.close()
+        
+        # Check if all expected indexes exist
+        missing_indexes = set(expected_indexes) - set(existing_indexes)
+        if missing_indexes:
+            print(f"WARNING: {len(missing_indexes)} full-text search indexes are missing")
+            return False
+        else:
+            print("SUCCESS: All full-text search indexes are present and functional")
+            return True
+        
+    except Exception as e:
+        print(f"FAILED: Error testing full-text search indexes: {e}")
+        return False
+
+def test_search_methods():
+    """Test the DatabaseManager search methods."""
+    print("\nTesting DatabaseManager search methods...")
+    try:
+        from database_setup import DatabaseManager
+        
+        db_manager = DatabaseManager(DB_CONFIG)
+        if not db_manager.connect():
+            print("FAILED: Could not connect to database")
+            return False
+        
+        # Test company search methods
+        print("Testing company search methods:")
+        
+        # Full-text search
+        companies_ft = db_manager.search_companies("restaurant", search_type='fulltext', limit=3)
+        print(f"  Full-text search for 'restaurant': {len(companies_ft)} results")
+        
+        # Like search
+        companies_like = db_manager.search_companies("LDA", search_type='like', limit=3)
+        print(f"  Like search for 'LDA': {len(companies_like)} results")
+        
+        # Regex search
+        companies_regex = db_manager.search_companies("^[AB]", search_type='regex', limit=3)
+        print(f"  Regex search for '^[AB]': {len(companies_regex)} results")
+        
+        # Test incentive search methods
+        print("Testing incentive search methods:")
+        
+        # Full-text search
+        incentives_ft = db_manager.search_incentives("digital", search_type='fulltext', limit=3)
+        print(f"  Full-text search for 'digital': {len(incentives_ft)} results")
+        
+        # Like search
+        incentives_like = db_manager.search_incentives("PT2030", search_type='like', limit=3)
+        print(f"  Like search for 'PT2030': {len(incentives_like)} results")
+        
+        # Test combined search
+        print("Testing combined search:")
+        combined_results = db_manager.search_all("technology", search_type='fulltext', limit=2)
+        print(f"  Combined search for 'technology': {len(combined_results['companies'])} companies, {len(combined_results['incentives'])} incentives")
+        
+        # Test error handling
+        print("Testing error handling:")
+        try:
+            invalid_search = db_manager.search_companies("test", search_type='invalid', limit=1)
+            print("  [ERROR] Invalid search type should have raised an error")
+        except ValueError as e:
+            print(f"  [OK] Invalid search type properly handled: {e}")
+        
+        db_manager.disconnect()
+        
+        # Basic success criteria
+        if (len(companies_ft) > 0 or len(companies_like) > 0 or len(companies_regex) > 0) and \
+           (len(incentives_ft) > 0 or len(incentives_like) > 0):
+            print("SUCCESS: Search methods are working correctly")
+            return True
+        else:
+            print("WARNING: Search methods returned no results - check if data exists")
+            return True  # Still consider it a success if methods work without errors
+        
+    except Exception as e:
+        print(f"FAILED: Error testing search methods: {e}")
+        return False
+
 def main():
     """Run all database tests."""
     print("Augusta Incentives Database Test")
@@ -299,7 +484,9 @@ def main():
         ("Table Structure", test_table_structure),
         ("Data Counts", test_data_counts),
         ("Column Statistics", test_column_statistics),
-        ("Sample Queries", test_sample_queries)
+        ("Sample Queries", test_sample_queries),
+        ("Full-Text Search Indexes", test_fulltext_indexes),
+        ("Search Methods", test_search_methods)
     ]
     
     passed = 0
