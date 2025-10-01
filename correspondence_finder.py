@@ -9,6 +9,8 @@ import os
 import sys
 import json
 import time
+import signal
+import threading
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 
@@ -47,12 +49,65 @@ class CorrespondenceFinder:
         self.openai_config = openai_config
         self.connection = None
         self.cursor = None
+        self.shutdown_requested = False
         
         # Initialize OpenAI client
         if not openai_config.get('api_key'):
             raise ValueError("OpenAI API key not found. Set OPENAI_API_KEY environment variable.")
         
         self.client = openai.OpenAI(api_key=openai_config['api_key'])
+        
+        # Set up signal handler for graceful shutdown
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
+    
+    def _signal_handler(self, signum, frame):
+        """Handle shutdown signals gracefully."""
+        print(f"\nReceived signal {signum}. Shutting down gracefully...")
+        self.shutdown_requested = True
+    
+    def _make_openai_call_with_timeout(self, messages, timeout=60):
+        """
+        Make OpenAI API call with timeout using threading.
+        
+        Args:
+            messages: List of message dictionaries for the API call
+            timeout: Timeout in seconds
+        
+        Returns:
+            API response or None if timeout/error
+        """
+        result = [None]
+        exception = [None]
+        
+        def api_call():
+            try:
+                result[0] = self.client.chat.completions.create(
+                    model=self.openai_config['model'],
+                    messages=messages,
+                    max_tokens=self.openai_config['max_tokens'],
+                    temperature=self.openai_config['temperature']
+                )
+            except Exception as e:
+                exception[0] = e
+        
+        # Start API call in separate thread
+        thread = threading.Thread(target=api_call)
+        thread.daemon = True
+        thread.start()
+        
+        # Wait for completion or timeout
+        thread.join(timeout)
+        
+        if thread.is_alive():
+            print(f"OpenAI API call timed out after {timeout} seconds")
+            return None
+        
+        if exception[0]:
+            print(f"OpenAI API call failed: {exception[0]}")
+            return None
+        
+        return result[0]
     
     def connect_database(self) -> bool:
         """Establish connection to PostgreSQL database."""
@@ -209,6 +264,10 @@ class CorrespondenceFinder:
             List of keywords for searching companies
         """
         try:
+            # Check if shutdown was requested
+            if self.shutdown_requested:
+                return []
+            
             # Load the keywords prompt
             with open('keywords_prompt.txt', 'r', encoding='utf-8') as f:
                 keywords_prompt = f.read()
@@ -223,15 +282,18 @@ class CorrespondenceFinder:
             AI Description: {incentive.get('ai_description', 'N/A')}
             """
             
-            response = self.client.chat.completions.create(
-                model=self.openai_config['model'],
+            # Make API call with timeout
+            response = self._make_openai_call_with_timeout(
                 messages=[
                     {"role": "system", "content": "You are a keyword extraction assistant. Follow the prompt instructions exactly and return only a JSON array of keywords."},
                     {"role": "user", "content": full_prompt}
                 ],
-                max_tokens=self.openai_config['max_tokens'],
-                temperature=self.openai_config['temperature']
+                timeout=60  # 60 second timeout
             )
+            
+            if response is None:
+                print("OpenAI API call timed out or failed")
+                return []
             
             # Parse OpenAI response
             content = response.choices[0].message.content.strip()
@@ -275,6 +337,10 @@ class CorrespondenceFinder:
             List of top 5 company IDs in descending order of relevance
         """
         try:
+            # Check if shutdown was requested
+            if self.shutdown_requested:
+                return []
+            
             # Load the ranking prompt
             with open('ranking_prompt.txt', 'r', encoding='utf-8') as f:
                 ranking_prompt = f.read()
@@ -314,15 +380,18 @@ class CorrespondenceFinder:
             {json.dumps(candidates, indent=2, default=str)}
             """
             
-            response = self.client.chat.completions.create(
-                model=self.openai_config['model'],
+            # Make API call with timeout
+            response = self._make_openai_call_with_timeout(
                 messages=[
                     {"role": "system", "content": "You are a company-incentive matching assistant. Follow the prompt instructions exactly and return only a JSON array of 5 company IDs in descending order of relevance."},
                     {"role": "user", "content": full_prompt}
                 ],
-                max_tokens=self.openai_config['max_tokens'],
-                temperature=self.openai_config['temperature']
+                timeout=90  # 90 second timeout for ranking (more complex task)
             )
+            
+            if response is None:
+                print("OpenAI API call timed out or failed")
+                return []
             
             # Parse OpenAI response
             content = response.choices[0].message.content.strip()
@@ -334,13 +403,16 @@ class CorrespondenceFinder:
             print(f"Error ranking companies for incentive: {e}")
             return []
     
-    def process_all_incentives(self) -> Dict[str, Any]:
+    def process_all_incentives(self, resume_from_file: str = None) -> Dict[str, Any]:
         """
         Process all incentives and find best company matches using the new workflow:
         1. Extract keywords from each incentive using keywords_prompt.txt
         2. Search for top 25 companies using those keywords
         3. Rank companies using ranking_prompt.txt to get top 5
         4. Save results as JSON
+        
+        Args:
+            resume_from_file: Optional path to existing results file to resume from
         
         Returns:
             Dictionary with results for each incentive
@@ -357,9 +429,50 @@ class CorrespondenceFinder:
                 print("No incentives found in database")
                 return {}
             
+            # Load existing results if resuming
             results = {}
+            start_index = 0
+            if resume_from_file and os.path.exists(resume_from_file):
+                try:
+                    with open(resume_from_file, 'r') as f:
+                        results = json.load(f)
+                    
+                    # Find the actual starting index by checking which incentives are missing or incomplete
+                    completed_incentive_ids = set(int(k) for k in results.keys())
+                    all_incentive_ids = set(incentive['incentive_id'] for incentive in incentives)
+                    missing_incentive_ids = all_incentive_ids - completed_incentive_ids
+                    
+                    # Also check for incomplete results (those with errors or missing data)
+                    incomplete_incentive_ids = set()
+                    for incentive_id, data in results.items():
+                        if 'error' in data or not data.get('top_5_company_ids'):
+                            incomplete_incentive_ids.add(int(incentive_id))
+                    
+                    # Combine missing and incomplete incentives
+                    need_processing = missing_incentive_ids | incomplete_incentive_ids
+                    
+                    if need_processing:
+                        # Find the first incentive that needs processing
+                        need_processing_sorted = sorted(need_processing)
+                        first_id = need_processing_sorted[0]
+                        start_index = next(i for i, inc in enumerate(incentives) if inc['incentive_id'] == first_id)
+                        print(f"Resuming from existing results. Found {len(results)} total entries.")
+                        print(f"Found {len(missing_incentive_ids)} missing and {len(incomplete_incentive_ids)} incomplete incentives.")
+                        print(f"Resuming from incentive {first_id} (index {start_index + 1} of {len(incentives)})")
+                    else:
+                        print(f"All {len(incentives)} incentives already completed successfully in existing results.")
+                        return results
+                        
+                except Exception as e:
+                    print(f"Could not load existing results: {e}")
+                    results = {}
             
-            for i, incentive in enumerate(incentives, 1):
+            for i, incentive in enumerate(incentives[start_index:], start_index + 1):
+                # Check for shutdown request
+                if self.shutdown_requested:
+                    print(f"\nShutdown requested. Saving progress up to incentive {i-1}...")
+                    break
+                
                 print(f"Processing incentive {i} of {len(incentives)}: {incentive.get('title')}")
                 
                 # Initialize timing for this incentive
@@ -371,6 +484,11 @@ class CorrespondenceFinder:
                 keywords = self.extract_keywords_from_incentive(incentive)
                 keyword_end_time = time.time()
                 timing_data['keyword_extraction_time'] = round(keyword_end_time - keyword_start_time, 2)
+                
+                # Check for shutdown after each step
+                if self.shutdown_requested:
+                    print(f"\nShutdown requested during keyword extraction. Saving progress...")
+                    break
                 
                 if not keywords:
                     print(f" Keywords: None")
@@ -389,6 +507,8 @@ class CorrespondenceFinder:
                         'error': 'No keywords extracted',
                         'timing': timing_data
                     }
+                    # Save progress after each incentive
+                    self._save_progress(results, "data/correspondence_debug.json")
                     continue
                 
                 # Step 2: Search for top 25 companies using keywords
@@ -396,6 +516,11 @@ class CorrespondenceFinder:
                 top_25_companies = self.search_companies_by_keywords(keywords, limit=25)
                 search_end_time = time.time()
                 timing_data['company_search_time'] = round(search_end_time - search_start_time, 2)
+                
+                # Check for shutdown after each step
+                if self.shutdown_requested:
+                    print(f"\nShutdown requested during company search. Saving progress...")
+                    break
                 
                 if not top_25_companies:
                     print(f" Keywords: {', '.join(keywords) if keywords else 'None'}")
@@ -414,6 +539,8 @@ class CorrespondenceFinder:
                         'error': 'No companies found',
                         'timing': timing_data
                     }
+                    # Save progress after each incentive
+                    self._save_progress(results, "data/correspondence_debug.json")
                     continue
                 
                 # Step 3: Rank companies using ranking prompt to get top 5
@@ -421,6 +548,11 @@ class CorrespondenceFinder:
                 top_5_company_ids = self.rank_companies_for_incentive(incentive, top_25_companies)
                 ranking_end_time = time.time()
                 timing_data['company_ranking_time'] = round(ranking_end_time - ranking_start_time, 2)
+                
+                # Check for shutdown after each step
+                if self.shutdown_requested:
+                    print(f"\nShutdown requested during company ranking. Saving progress...")
+                    break
                 
                 # Calculate total processing time
                 incentive_end_time = time.time()
@@ -443,12 +575,30 @@ class CorrespondenceFinder:
                 print(f"   company search: {timing_data['company_search_time']:.2f} s")
                 print(f"   company ranking: {timing_data['company_ranking_time']:.2f} s")
                 print()
+                
+                # Save progress after each incentive
+                self._save_progress(results, "data/correspondence_debug.json")
             
-            print(f"Completed processing {len(incentives)} incentives")
+            if self.shutdown_requested:
+                print(f"Processing stopped due to shutdown request. Processed {len(results)} incentives.")
+            else:
+                print(f"Completed processing {len(incentives)} incentives")
+            
             return results
             
         finally:
             self.disconnect_database()
+    
+    def _save_progress(self, results: Dict[str, Any], filename: str):
+        """Save progress to file without printing success message."""
+        try:
+            # Ensure the data directory exists
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+            
+            with open(filename, 'w') as f:
+                json.dump(results, f, indent=2, default=str)
+        except Exception as e:
+            print(f"Error saving progress: {e}")
     
     def create_simplified_results(self, results: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -516,11 +666,23 @@ def main():
         # Initialize the correspondence finder
         finder = CorrespondenceFinder(DB_CONFIG, OPENAI_CONFIG)
         
-        # Process all incentives
-        results = finder.process_all_incentives()
+        # Check if we should resume from existing results
+        resume_file = "data/correspondence_debug.json"
+        if os.path.exists(resume_file):
+            print(f"Found existing results file: {resume_file}")
+            response = input("Do you want to resume from existing results? (y/n): ").lower().strip()
+            if response == 'y':
+                print("Resuming from existing results...")
+                results = finder.process_all_incentives(resume_from_file=resume_file)
+            else:
+                print("Starting fresh...")
+                results = finder.process_all_incentives()
+        else:
+            print("No existing results found. Starting fresh...")
+            results = finder.process_all_incentives()
         
         if results:
-            # Save debug results (full data)
+            # Save debug results (full data) - this will overwrite the progress file
             finder.save_results(results, "data/correspondence_debug.json")
             
             # Create and save simplified results
@@ -530,6 +692,8 @@ def main():
         else:
             print("No results generated. Check logs for errors.")
             
+    except KeyboardInterrupt:
+        print("\nScript interrupted by user.")
     except Exception as e:
         print(f"Error: {e}")
 
