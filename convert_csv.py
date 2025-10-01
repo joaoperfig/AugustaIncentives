@@ -1,8 +1,3 @@
-#!/usr/bin/env python3
-"""
-Script to convert correspondence_results.json to correspondence_results.csv
-Each line contains: incentive_id, company1id, company2id, company3id, company4id, company5id
-"""
 
 import json
 import csv

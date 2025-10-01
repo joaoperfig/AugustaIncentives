@@ -1,9 +1,3 @@
-"""
-Configuration module for Augusta Incentives project.
-
-This module centralizes all configuration settings including database,
-OpenAI API, and other application settings.
-"""
 
 import json
 import logging

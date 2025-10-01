@@ -1,9 +1,4 @@
-"""
-Correspondence Finder for Augusta Incentives
 
-This script uses OpenAI API and search tools to find the best companies 
-for each incentive by analyzing company profiles and incentive requirements.
-"""
 
 import os
 import sys

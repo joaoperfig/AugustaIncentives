@@ -1,8 +1,4 @@
-#!/usr/bin/env python3
-"""
-Simple test script to verify that database_setup.py worked correctly.
-This script performs basic checks to ensure the database is properly set up.
-"""
+
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
