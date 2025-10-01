@@ -292,9 +292,64 @@ class CorrespondenceFinder:
             
             # Parse OpenAI response
             content = response.choices[0].message.content.strip()
-            keywords = json.loads(content)
             
-            return keywords
+            # Debug: Print the raw content to see what we're getting (only if parsing fails)
+            # print(f"Raw OpenAI response: {repr(content)}")
+            
+            # Try to parse as JSON
+            try:
+                keywords = json.loads(content)
+                return keywords
+            except json.JSONDecodeError as json_err:
+                print(f"JSON parsing error: {json_err}")
+                print(f"Content that failed to parse: {repr(content)}")
+                
+                # Try to clean up markdown code blocks
+                if '```json' in content:
+                    # Extract content between ```json and ```
+                    start_marker = '```json'
+                    end_marker = '```'
+                    start_idx = content.find(start_marker)
+                    if start_idx != -1:
+                        start_idx += len(start_marker)
+                        end_idx = content.find(end_marker, start_idx)
+                        if end_idx != -1:
+                            cleaned_content = content[start_idx:end_idx].strip()
+                            try:
+                                keywords = json.loads(cleaned_content)
+                                print(f"Successfully parsed JSON from markdown block: {keywords}")
+                                return keywords
+                            except:
+                                pass
+                
+                # Try to extract keywords from non-JSON response
+                # Look for common patterns like quoted strings or comma-separated values
+                if content.startswith('[') and content.endswith(']'):
+                    # Try to clean up malformed JSON
+                    try:
+                        # Remove any extra text before/after brackets
+                        start_idx = content.find('[')
+                        end_idx = content.rfind(']') + 1
+                        cleaned_content = content[start_idx:end_idx]
+                        keywords = json.loads(cleaned_content)
+                        return keywords
+                    except:
+                        pass
+                
+                # If all else fails, try to extract individual quoted strings
+                import re
+                quoted_strings = re.findall(r'"([^"]+)"', content)
+                if quoted_strings:
+                    print(f"Extracted keywords from quoted strings: {quoted_strings}")
+                    return quoted_strings
+                
+                # Last resort: split by common delimiters
+                keywords = [k.strip() for k in content.replace('[', '').replace(']', '').split(',') if k.strip()]
+                if keywords:
+                    print(f"Extracted keywords by splitting: {keywords}")
+                    return keywords
+                
+                return []
             
         except Exception as e:
             print(f"Error extracting keywords from incentive: {e}")
@@ -390,9 +445,47 @@ class CorrespondenceFinder:
             
             # Parse OpenAI response
             content = response.choices[0].message.content.strip()
-            top_company_ids = json.loads(content)
             
-            return top_company_ids
+            # Debug: Print the raw content to see what we're getting (only if parsing fails)
+            # print(f"Raw ranking response: {repr(content)}")
+            
+            # Try to parse as JSON
+            try:
+                top_company_ids = json.loads(content)
+                return top_company_ids
+            except json.JSONDecodeError as json_err:
+                print(f"JSON parsing error in ranking: {json_err}")
+                print(f"Content that failed to parse: {repr(content)}")
+                
+                # Try to clean up markdown code blocks
+                if '```json' in content:
+                    # Extract content between ```json and ```
+                    start_marker = '```json'
+                    end_marker = '```'
+                    start_idx = content.find(start_marker)
+                    if start_idx != -1:
+                        start_idx += len(start_marker)
+                        end_idx = content.find(end_marker, start_idx)
+                        if end_idx != -1:
+                            cleaned_content = content[start_idx:end_idx].strip()
+                            try:
+                                top_company_ids = json.loads(cleaned_content)
+                                print(f"Successfully parsed JSON from markdown block: {top_company_ids}")
+                                return top_company_ids
+                            except:
+                                pass
+                
+                # Try to extract company IDs from non-JSON response
+                import re
+                # Look for numeric IDs in the response
+                ids = re.findall(r'\b\d+\b', content)
+                if ids:
+                    # Convert to integers and take first 5
+                    company_ids = [int(id_str) for id_str in ids[:5]]
+                    print(f"Extracted company IDs: {company_ids}")
+                    return company_ids
+                
+                return []
             
         except Exception as e:
             print(f"Error ranking companies for incentive: {e}")
