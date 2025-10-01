@@ -39,7 +39,7 @@ DEFAULT_DB_CONFIG = {
 
 # Default OpenAI configuration
 DEFAULT_OPENAI_CONFIG = {
-    'model': 'gpt-4',  # Can be changed to gpt-3.5-turbo for cost optimization
+    'model': 'gpt-3.5-turbo', 
     'max_tokens': 2000,
     'temperature': 0.3
 }
