@@ -3,7 +3,6 @@ import csv
 import json
 import os
 import sys
-import logging
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
@@ -15,16 +14,6 @@ except ImportError:
     print("psycopg2-binary is required")
     sys.exit(1)
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('database_setup.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
 
 # Database configuration
 DB_CONFIG = {
@@ -61,15 +50,15 @@ class DatabaseManager:
             )
             
             if not temp_cursor.fetchone():
-                logger.info(f"Creating database: {self.config['database']}")
+                print(f"Creating database: {self.config['database']}")
                 temp_cursor.execute(
                     sql.SQL("CREATE DATABASE {}").format(
                         sql.Identifier(self.config['database'])
                     )
                 )
-                logger.info("Database created successfully")
+                print("Database created successfully")
             else:
-                logger.info(f"Database {self.config['database']} already exists")
+                print(f"Database {self.config['database']} already exists")
             
             temp_cursor.close()
             conn.close()
@@ -79,11 +68,11 @@ class DatabaseManager:
             self.connection.autocommit = False
             self.cursor = self.connection.cursor(cursor_factory=RealDictCursor)
             
-            logger.info("Connected to PostgreSQL database successfully")
+            print("Connected to PostgreSQL database successfully")
             return True
             
         except psycopg2.Error as e:
-            logger.error(f"Database connection error: {e}")
+            print(f"Database connection error: {e}")
             return False
     
     def disconnect(self):
@@ -92,7 +81,7 @@ class DatabaseManager:
             self.cursor.close()
         if self.connection:
             self.connection.close()
-        logger.info("Database connection closed")
+        print("Database connection closed")
     
     def create_tables(self):
         """Create database tables for companies and incentives."""
@@ -152,10 +141,10 @@ class DatabaseManager:
             ]
             
             self.cursor.execute(companies_table_sql)
-            logger.info("Companies table created/verified")
+            print("Companies table created/verified")
             
             self.cursor.execute(incentives_table_sql)
-            logger.info("Incentives table created/verified")
+            print("Incentives table created/verified")
             
             for index_sql in indexes_sql:
                 self.cursor.execute(index_sql)
@@ -163,11 +152,11 @@ class DatabaseManager:
             for fulltext_sql in fulltext_indexes_sql:
                 self.cursor.execute(fulltext_sql)
             
-            logger.info("Database indexes and full-text search indexes created/verified")
+            print("Database indexes and full-text search indexes created/verified")
             self.connection.commit()
             
         except psycopg2.Error as e:
-            logger.error(f"Error creating tables: {e}")
+            print(f"Error creating tables: {e}")
             self.connection.rollback()
             raise
     
@@ -176,7 +165,7 @@ class DatabaseManager:
         try:
             # Clear existing data
             self.cursor.execute("DELETE FROM companies")
-            logger.info("Cleared existing companies data")
+            print("Cleared existing companies data")
             
             companies_loaded = 0
             batch_size = 1000
@@ -200,7 +189,7 @@ class DatabaseManager:
                         self._insert_companies_batch(batch)
                         companies_loaded += len(batch)
                         batch = []
-                        logger.info(f"Loaded {companies_loaded} companies...")
+                        print(f"Loaded {companies_loaded} companies...")
                 
                 # Insert remaining records
                 if batch:
@@ -208,11 +197,11 @@ class DatabaseManager:
                     companies_loaded += len(batch)
             
             self.connection.commit()
-            logger.info(f"Successfully loaded {companies_loaded} companies")
+            print(f"Successfully loaded {companies_loaded} companies")
             return companies_loaded
             
         except Exception as e:
-            logger.error(f"Error loading companies data: {e}")
+            print(f"Error loading companies data: {e}")
             self.connection.rollback()
             raise
     
@@ -229,7 +218,7 @@ class DatabaseManager:
         try:
             # Clear existing data
             self.cursor.execute("DELETE FROM incentives")
-            logger.info("Cleared existing incentives data")
+            print("Cleared existing incentives data")
             
             incentives_loaded = 0
             batch_size = 100
@@ -250,7 +239,7 @@ class DatabaseManager:
                         try:
                             total_budget = float(row['total_budget'])
                         except ValueError:
-                            logger.warning(f"Invalid total_budget for row {row.get('incentive_id', 'unknown')}")
+                            print(f"Warning: Invalid total_budget for row {row.get('incentive_id', 'unknown')}")
                     
                     incentive_data = {
                         'title': row.get('title', '').strip(),
@@ -270,7 +259,7 @@ class DatabaseManager:
                         self._insert_incentives_batch(batch)
                         incentives_loaded += len(batch)
                         batch = []
-                        logger.info(f"Loaded {incentives_loaded} incentives...")
+                        print(f"Loaded {incentives_loaded} incentives...")
                 
                 # Insert remaining records
                 if batch:
@@ -278,11 +267,11 @@ class DatabaseManager:
                     incentives_loaded += len(batch)
             
             self.connection.commit()
-            logger.info(f"Successfully loaded {incentives_loaded} incentives")
+            print(f"Successfully loaded {incentives_loaded} incentives")
             return incentives_loaded
             
         except Exception as e:
-            logger.error(f"Error loading incentives data: {e}")
+            print(f"Error loading incentives data: {e}")
             self.connection.rollback()
             raise
     
@@ -313,7 +302,7 @@ class DatabaseManager:
             
             return datetime.fromisoformat(timestamp_str.replace(' ', 'T'))
         except ValueError:
-            logger.warning(f"Could not parse timestamp: {timestamp_str}")
+            print(f"Warning: Could not parse timestamp: {timestamp_str}")
             return None
     
     def get_table_stats(self) -> Dict[str, int]:
@@ -330,7 +319,7 @@ class DatabaseManager:
             return stats
             
         except psycopg2.Error as e:
-            logger.error(f"Error getting table stats: {e}")
+            print(f"Error getting table stats: {e}")
             return {}
     
     def search_companies(self, keywords: str, search_type: str = 'fulltext', limit: int = 100) -> List[Dict[str, Any]]:
@@ -391,7 +380,7 @@ class DatabaseManager:
             return [dict(row) for row in results]
             
         except psycopg2.Error as e:
-            logger.error(f"Error searching companies: {e}")
+            print(f"Error searching companies: {e}")
             return []
     
     def search_incentives(self, keywords: str, search_type: str = 'fulltext', limit: int = 100) -> List[Dict[str, Any]]:
@@ -455,7 +444,7 @@ class DatabaseManager:
             return [dict(row) for row in results]
             
         except psycopg2.Error as e:
-            logger.error(f"Error searching incentives: {e}")
+            print(f"Error searching incentives: {e}")
             return []
     
     def search_all(self, keywords: str, search_type: str = 'fulltext', limit: int = 100) -> Dict[str, List[Dict[str, Any]]]:
@@ -475,18 +464,18 @@ class DatabaseManager:
 
 def main():
     """Main function to set up database and load data."""
-    logger.info("Starting Augusta Incentives database setup")
+    print("Starting Augusta Incentives database setup")
     
     # Check if CSV files exist
     companies_file = os.path.join('data', 'companies.csv')
     incentives_file = os.path.join('data', 'incentives.csv')
     
     if not os.path.exists(companies_file):
-        logger.error(f"Companies CSV file not found: {companies_file}")
+        print(f"Error: Companies CSV file not found: {companies_file}")
         return False
     
     if not os.path.exists(incentives_file):
-        logger.error(f"Incentives CSV file not found: {incentives_file}")
+        print(f"Error: Incentives CSV file not found: {incentives_file}")
         return False
     
     # Initialize database manager
@@ -495,30 +484,30 @@ def main():
     try:
         # Connect to database
         if not db_manager.connect():
-            logger.error("Failed to connect to database")
+            print("Error: Failed to connect to database")
             return False
         
         # Create tables
-        logger.info("Creating database tables...")
+        print("Creating database tables...")
         db_manager.create_tables()
         
         # Load companies data
-        logger.info("Loading companies data...")
+        print("Loading companies data...")
         companies_count = db_manager.load_companies_data(companies_file)
         
         # Load incentives data
-        logger.info("Loading incentives data...")
+        print("Loading incentives data...")
         incentives_count = db_manager.load_incentives_data(incentives_file)
         
         # Get final statistics
         stats = db_manager.get_table_stats()
-        logger.info(f"Database setup completed successfully!")
-        logger.info(f"Final statistics: {stats}")
+        print(f"Database setup completed successfully!")
+        print(f"Final statistics: {stats}")
         
         return True
         
     except Exception as e:
-        logger.error(f"Database setup failed: {e}")
+        print(f"Error: Database setup failed: {e}")
         return False
     
     finally:
