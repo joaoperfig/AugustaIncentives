@@ -126,7 +126,7 @@ class DatabaseManager:
 class AugustaIncentivesChatbot:
     """Main chatbot class for incentives and companies database exploration."""
     
-    def __init__(self, prompt_file: str = "chatbot_prompt.txt"):
+    def __init__(self, prompt_file: str = "prompts/chatbot_prompt.txt"):
         self.prompt_file = prompt_file
         self.system_prompt = ""
         self.decision_prompt = ""
@@ -164,7 +164,7 @@ class AugustaIncentivesChatbot:
     def _load_decision_prompt(self):
         """Load the decision prompt from the txt file."""
         try:
-            decision_prompt_file = "decision_prompt.txt"
+            decision_prompt_file = "prompts/decision_prompt.txt"
             if not os.path.exists(decision_prompt_file):
                 raise FileNotFoundError(f"Decision prompt file not found: {decision_prompt_file}")
             
@@ -180,7 +180,7 @@ class AugustaIncentivesChatbot:
     def _load_final_iteration_prompt(self):
         """Load the final iteration prompt from the txt file."""
         try:
-            final_iteration_prompt_file = "final_iteration_prompt.txt"
+            final_iteration_prompt_file = "prompts/final_iteration_prompt.txt"
             if not os.path.exists(final_iteration_prompt_file):
                 raise FileNotFoundError(f"Final iteration prompt file not found: {final_iteration_prompt_file}")
             

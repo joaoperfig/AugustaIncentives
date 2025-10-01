@@ -269,7 +269,7 @@ class CorrespondenceFinder:
                 return []
             
             # Load the keywords prompt
-            with open('keywords_prompt.txt', 'r', encoding='utf-8') as f:
+            with open('prompts/keywords_prompt.txt', 'r', encoding='utf-8') as f:
                 keywords_prompt = f.read()
             
             # Prepare the full prompt with incentive data
@@ -342,7 +342,7 @@ class CorrespondenceFinder:
                 return []
             
             # Load the ranking prompt
-            with open('ranking_prompt.txt', 'r', encoding='utf-8') as f:
+            with open('prompts/ranking_prompt.txt', 'r', encoding='utf-8') as f:
                 ranking_prompt = f.read()
             
             # Prepare company data for analysis with text cropping
@@ -406,9 +406,9 @@ class CorrespondenceFinder:
     def process_all_incentives(self, resume_from_file: str = None) -> Dict[str, Any]:
         """
         Process all incentives and find best company matches using the new workflow:
-        1. Extract keywords from each incentive using keywords_prompt.txt
+        1. Extract keywords from each incentive using prompts/keywords_prompt.txt
         2. Search for top 25 companies using those keywords
-        3. Rank companies using ranking_prompt.txt to get top 5
+        3. Rank companies using prompts/ranking_prompt.txt to get top 5
         4. Save results as JSON
         
         Args:
