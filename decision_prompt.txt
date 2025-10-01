@@ -1,0 +1,17 @@
+The following SQL queries were executed and returned these results:
+
+{query_output}
+
+You now have the query results. You have two options:
+
+1. **REPLY TO USER**: Provide a human-readable interpretation of these results, explaining what the data shows and answering the user's original question: "{original_user_message}"
+
+2. **DO ANOTHER QUERY**: If you need more information to fully answer the user's question, you can write additional SQL queries to gather more data.
+
+**Instructions:**
+- If you choose to REPLY TO USER: Provide a clear, conversational explanation of the results. Do NOT include any SQL queries in your response.
+- If you choose to DO ANOTHER QUERY: Write your additional SQL queries in ```sql code blocks. You can also provide context about why you need more information.
+
+**Current iteration: {iteration_count}/{max_iterations}**
+
+What would you like to do?
